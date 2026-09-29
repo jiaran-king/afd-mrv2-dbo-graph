@@ -202,3 +202,13 @@ H20 作业4115在安装前遇到脚本继承的文件大小硬限制，已退出
 允许模型分片的软限制。续跑作业 **4116 已在 vllm-h20-02 获得四卡并进入隔离环境
 准备**，后续自动执行既定单测和B/E/G。SLURM accounting storage未启用，终态
 使用 `scontrol show job` 和本任务保存的退出/清理日志确认，不依赖 `sacct`。
+
+H20 环境和资产已准备完成（4116）：vLLM `gced6857af`、Torch `2.13.0+cu130`、
+CUDA13.0、NCCL2.29.7、SM90，目标 base 模型revision及GSM8K train7473/test1319
+已确认。4116操作控制脚本因Python未暴露`os.pidfd_open`退出；已在本任务控制器
+改用psutil缓存PID/start_time身份，仍按精确任务标记和SLURM job ID归属清理。
+续跑作业 **4124** 已在 `vllm-h20-01` 分配，旧单测PID检查已通过。
+
+本轮目录：`evidence/acceptance-20260929T201853`。六个局部测试文件在目标环境
+运行 **341 passed**（14项上游torch弃用警告）；units结果记录无残留进程、无
+清理错误、无新增共享内存。控制器随后进入B档，B/E/G尚未取得最终结果。
