@@ -170,3 +170,29 @@ python -m pytest -q -s 'tests/e2e/models/deepseek_v2_lite/test_deepseek_v2_lite.
 来自成功调用实际 `run_fullgraph`，live/dummy/profile 分开；FFN 记录实际选择的
 模式和 graph key。命令/证据解析单测本地 **174 passed**；运行时新增日志测试
 尚待本次 H200 配额执行。这些更改不构成 GPU 实测通过声明。
+
+## H20 迁移（用户最新指令）
+
+用户随后要求切换到 H20。H200 的 `d99401f0` 已由 `gpu cancel` 精确取消，
+PID 2690692/2690694 均已退出；H200 没有启动模型，不再提交本任务的 H200 作业。
+自动跟进 `gpu-dbo` 已改为 H20 SLURM 路线。
+
+- 登录：`ssh vllm-h20-head`，账号 `david_cwq`，不启用 Desktop 持久SSH连接。
+- 远程目录：`/home/david_cwq/zhouziheng/afd-mrv2-dbo-20260929`。
+- 当前已提交作业：**4115**，`h20` 分区，4 GPU、32 CPU、256G 内存、4小时；
+  不限制具体节点，由SLURM分配。此前4113仅运行轻量预检，因可选目录扫描权限
+  错误退出，未启动模型；问题已修复，4113已结束。
+- 运行脚本：`afd-mrv2-h20.slurm` → `start-acceptance.sh` →
+  `afd-mrv2-hardware-controller.py`。环境准备、下载、单测及模型运行均在分配内。
+- 隔离环境：本任务 `runtime/`，安装目标 `vllm==0.30.0` 后断言
+  `_version.__commit_id__ == 'gced6857af'`，核对实际 import 路径和 SM90。
+  不使用已有其他版本来替代验收，不修改其他项目环境。
+- 模型仍为 base DeepSeek-V2-Lite，固定 revision
+  `604d5664dddd88a0433dbae533b7fe9472482de0`；不拿现场 Chat 权重替代。
+- 最新日志从 `evidence/slurm-4115.log`、`evidence/job-4115/install.log`、
+  `runtime-check.json`、`assets.log` 开始；实测启动后 `evidence/current-run.txt`
+  指向本轮 B/E/G 目录。SLURM 分配的 CUDA_VISIBLE_DEVICES 保留，AFD 角色仅在
+  分配设备集合中拆分。共享账号其他交互和 issue398 作业均保持不动。
+
+迁移及提交SLURM作业不等于GPU验收通过。持续跟进环境准备和真实运行结果，
+失败按日志定位并作有界修复，最后仍需完整的准确率、双阶段FULL及交错证据。
