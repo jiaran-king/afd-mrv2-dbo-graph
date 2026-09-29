@@ -1057,6 +1057,13 @@ def build_env(
         env["VLLM_PLUGINS"] = "ascend,afd" if args.device_backend == "npu" else "afd"
     if args.enable_dbo:
         env["VLLM_LOGGING_LEVEL"] = "DEBUG"
+    if args.scenario in V2_DBO_COMPARISON_SCENARIOS:
+        # vLLM's default handler only covers its own namespace. Include AFD's
+        # execution records so the live MRV2/FFN evidence reaches the verifier.
+        env.setdefault(
+            "VLLM_LOGGING_CONFIG_PATH",
+            str(Path(__file__).with_name("mrv2_logging.json")),
+        )
     env["PYTHONUNBUFFERED"] = "1"
     if e2e_run_id is not None:
         if role is None:

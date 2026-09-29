@@ -1707,6 +1707,33 @@ def test_build_env_enables_debug_logging_for_dbo_scenarios(monkeypatch):
     assert "VLLM_LOGGING_LEVEL" not in plain_env
 
 
+def test_mrv2_logging_emits_afd_evidence_in_fresh_process(monkeypatch):
+    monkeypatch.delenv("VLLM_LOGGING_CONFIG_PATH", raising=False)
+    args = _args()
+    args.scenario = "afd-v2-eager-dbo-dp2"
+    runner.configure_scenario(args)
+    env = runner.build_env("0,1", args, role="attention")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import json, logging, logging.config, os; "
+            "logging.config.dictConfig(json.load("
+            "open(os.environ['VLLM_LOGGING_CONFIG_PATH']))); "
+            "logging.getLogger('afd_plugin.v1.worker.attention_model_runner_v2')"
+            ".info('AFD execution: runner=MRV2'); "
+            "logging.getLogger('afd_plugin.v1.worker.ffn_model_runner')"
+            ".info('AFD execution: runner=FFN')",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "AFD execution: runner=MRV2" in result.stdout
+    assert "AFD execution: runner=FFN" in result.stdout
+
+
 def test_stream_output_records_attention_split_steps(monkeypatch):
     split_steps: list[float] = []
     process: Any = argparse.Namespace(

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "execution": {
+      "format": "%(levelname)s %(asctime)s [%(name)s:%(lineno)d] %(message)s",
+      "datefmt": "%m-%d %H:%M:%S"
+    }
+  },
+  "handlers": {
+    "console": {
+      "class": "logging.StreamHandler",
+      "formatter": "execution",
+      "level": "DEBUG",
+      "stream": "ext://sys.stdout"
+    }
+  },
+  "loggers": {
+    "vllm": {"handlers": ["console"], "level": "DEBUG", "propagate": false},
+    "afd_plugin": {"handlers": ["console"], "level": "INFO", "propagate": false}
+  }
+}
