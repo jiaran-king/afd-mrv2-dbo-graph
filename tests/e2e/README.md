@@ -141,7 +141,8 @@ and graph mode change; the graph row uses `FULL_DECODE_ONLY` with capture size 8
 (with a shared minimum of 24 for diagnostics).
 
 These are development scenarios, not hardware qualification evidence. The GPU
-DBO validator is still closed pending the baseline and integration work. Do not
+validator accepts exactly two microbatches and requires Attention DP > 1;
+FFN remains connector-driven. NPU DBO remains rejected. Do not
 substitute the older MRV1 `afd-graph-dbo-*` scenarios for these rows. Acceptance
 requires live two-stage execution, continuous FULL replay on the graph row,
 paired A/F evidence, accuracy comparison, and a representative overlap trace.

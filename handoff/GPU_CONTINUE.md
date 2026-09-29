@@ -6,8 +6,9 @@
 `jiaran-king/afd-mrv2-dbo-graph` 已由用户改为公开；2026-09-29 用户授权在
 独立 `codex/` 分支提交并推送续做工作。不创建上游 PR，不改仓库可见性。
 
-这是正在实现的代码，**不是已通过实机验收的支持版本**。当前 validation
-仍拒绝 MRV2 + DBO。需完成下述核验后收敛支持校验，不能单纯删除报错。
+这是正在实现的代码，**不是已通过实机验收的支持版本**。开发分支已定向开放 GPU validation
+（两个 microbatch，Attention DP > 1）；NPU 仍拒绝 DBO。配置入口可用不代表
+实机通过，必须完成下述核验。
 本次增量不包含 NPU 专属修改；源码基线中已有 NPU 功能保持原样。
 
 ## 固定版本
@@ -38,7 +39,7 @@ cache，不重写 FFN 执行器。公共 mixin 的新方法仅由 MRV2 新入口
 ## 已知未完成项
 
 - GPU 上 B/E/G 均未运行，不能将 CPU/mock 测试视为 CUDA/NCCL 或模型精度证据。
-- 尚未开放 validation；开发分支已补 MRV2 + DBO E2E 场景，尚待实机运行。
+- 开发分支已定向开放 GPU validation，并补 MRV2 + DBO E2E 场景；尚待实机运行。
   旧 `afd-graph-dbo-*` 场景属于 MRV1，不能拿它们作为本目标通过。
 - FFN graph cache 已以 stage ID 与各 DP token 数构成 key，代码层面可区分
   单/双阶段；仍需验证真实 A/F 两端连续 replay、输入刷新与通信匹配。
@@ -82,8 +83,8 @@ python -m pytest -q -s \
 
 1. 完成 GPU 必经接口检查，基线不正确先定位；复用上游 #50945 / #51700
    在固定版本中的最终实现，不搬 MRV1 的完整循环。
-2. 完成同步 P2pNcclAFDConnector 的 eager DBO 接入和针对性测试，再放开实际
-   支持的 GPU 配置。至少 Attention DP > 1，确认原生 ubatch runner 已创建，
+2. 通过已开放的正常配置入口核验同步 P2pNcclAFDConnector 的 eager DBO，
+   修复实机暴露的必要缺口。至少 Attention DP > 1，确认原生 ubatch runner 已创建，
    真实步 num_ubatches == 2；不得只看 enable_dbo 参数。
 3. 补 MRV2 DBO eager / FULL_DECODE_ONLY graph 场景，验证多次动态输入的 FULL
    replay。保持 A/F stage、shape、dtype、DP 控制与通信顺序一致。
@@ -107,3 +108,20 @@ ubatch_idx > 0；还存在 stage builder/seq_lens_np、graph 参数更新及设�
 Ascend 容器，执行内容仅为 CPU 逻辑/mock；没有分配 GPU/NPU、加载模型或实际
 捕图。因此此结果证明的是上述局部控制逻辑及既有 FFN/graph policy 回归，
 不能证明 GPU eager、DBO overlap、CUDA Graph 或精度已经通过。
+
+
+## 2026-09-29 H200 接手进展
+
+- `handoff_sha`: `1b89f19a6f0653d03543c5a5d35e7f98f4099115`。
+- 开发分支：`codex/gpu-mrv2-dbo`；未改原工作目录，未创建上游 PR。
+- H200 默认 Python 的 vLLM 已为 0.28.0，不用于本目标。可复用已安装的
+  `/data/zhouziheng/pr407-gpu-regression-20260929/runtime`；其 vLLM 版本文件
+  为 `0.30.0` / `gced6857af`。实际 import 路径仍由分配内的运行时预检确认。
+- 本任务远程目录：`/data/zhouziheng/afd-mrv2-dbo-20260929`，与 #407 隔离；
+  仅复用其运行依赖，不修改 #407 的代码、安装包或实验现场。
+- 本地 Python 3.12：`tests/unit/test_e2e_runner.py` **171 passed**；
+  `tests/unit/config/test_validation.py` + `tests/unit/v1/worker/test_cuda_graph.py`
+  **45 passed**。新增配置测试只隔离模型注册模块的运行时 import，执行真实
+  GPU/NPU validator 和 graph policy；不构成运行时集成证据。
+- 新场景及默认受控评测条件见 `tests/e2e/README.md`。本次还未得到 GPU
+  B/E/G 结果，不能宣称 DBO eager 或双阶段 FULL replay 已通过。
