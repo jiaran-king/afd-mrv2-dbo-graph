@@ -179,7 +179,7 @@ PID 2690692/2690694 均已退出；H200 没有启动模型，不再提交本任�
 
 - 登录：`ssh vllm-h20-head`，账号 `david_cwq`，不启用 Desktop 持久SSH连接。
 - 远程目录：`/home/david_cwq/zhouziheng/afd-mrv2-dbo-20260929`。
-- 当前已提交作业：**4115**，`h20` 分区，4 GPU、32 CPU、256G 内存、4小时；
+- 当前运行作业：**4116**，`h20` 分区，4 GPU、32 CPU、256G 内存、4小时；
   不限制具体节点，由SLURM分配。此前4113仅运行轻量预检，因可选目录扫描权限
   错误退出，未启动模型；问题已修复，4113已结束。
 - 运行脚本：`afd-mrv2-h20.slurm` → `start-acceptance.sh` →
@@ -189,10 +189,16 @@ PID 2690692/2690694 均已退出；H200 没有启动模型，不再提交本任�
   不使用已有其他版本来替代验收，不修改其他项目环境。
 - 模型仍为 base DeepSeek-V2-Lite，固定 revision
   `604d5664dddd88a0433dbae533b7fe9472482de0`；不拿现场 Chat 权重替代。
-- 最新日志从 `evidence/slurm-4115.log`、`evidence/job-4115/install.log`、
+- 最新日志从 `evidence/slurm-4116.log`、`evidence/job-4116/install.log`、
   `runtime-check.json`、`assets.log` 开始；实测启动后 `evidence/current-run.txt`
   指向本轮 B/E/G 目录。SLURM 分配的 CUDA_VISIBLE_DEVICES 保留，AFD 角色仅在
   分配设备集合中拆分。共享账号其他交互和 issue398 作业均保持不动。
 
 迁移及提交SLURM作业不等于GPU验收通过。持续跟进环境准备和真实运行结果，
 失败按日志定位并作有界修复，最后仍需完整的准确率、双阶段FULL及交错证据。
+
+
+H20 作业4115在安装前遇到脚本继承的文件大小硬限制，已退出且GPU为空；已改成
+允许模型分片的软限制。续跑作业 **4116 已在 vllm-h20-02 获得四卡并进入隔离环境
+准备**，后续自动执行既定单测和B/E/G。SLURM accounting storage未启用，终态
+使用 `scontrol show job` 和本任务保存的退出/清理日志确认，不依赖 `sacct`。
