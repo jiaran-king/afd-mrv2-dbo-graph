@@ -1,0 +1,144 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from afd_plugin.validation import (
+    ATTENTION_WORKER_FQCN,
+    FFN_WORKER_FQCN,
+    NPU_ATTENTION_WORKER_FQCN,
+    NPU_FFN_WORKER_FQCN,
+    assert_compatible_afd_stack,
+)
+
+
+def _vllm_like_config(*, afd, worker_cls):
+    return SimpleNamespace(
+        additional_config={"afd": afd},
+        parallel_config=SimpleNamespace(worker_cls=worker_cls),
+    )
+
+
+def test_attention_stack_validation_accepts_matching_worker():
+    vllm_config = _vllm_like_config(
+        afd={"role": "attention"},
+        worker_cls=ATTENTION_WORKER_FQCN,
+    )
+
+    config = assert_compatible_afd_stack(
+        vllm_config,
+        caller="test",
+        expected_role="attention",
+    )
+
+    assert config.role == "attention"
+
+
+def test_ffn_stack_validation_accepts_matching_worker():
+    vllm_config = _vllm_like_config(
+        afd={"role": "ffn"},
+        worker_cls=FFN_WORKER_FQCN,
+    )
+
+    config = assert_compatible_afd_stack(
+        vllm_config,
+        caller="test",
+        expected_role="ffn",
+    )
+
+    assert config.role == "ffn"
+
+
+def test_stack_validation_rejects_missing_afd_config():
+    vllm_config = SimpleNamespace(
+        additional_config={},
+        parallel_config=SimpleNamespace(worker_cls=ATTENTION_WORKER_FQCN),
+    )
+
+    with pytest.raises(ValueError, match="requires additional_config"):
+        assert_compatible_afd_stack(vllm_config, caller="test")
+
+
+def test_stack_validation_rejects_wrong_worker():
+    vllm_config = _vllm_like_config(
+        afd={"role": "ffn"},
+        worker_cls=ATTENTION_WORKER_FQCN,
+    )
+
+    with pytest.raises(ValueError, match="invalid worker class") as exc_info:
+        assert_compatible_afd_stack(vllm_config, caller="test")
+    assert "remove --worker-cls" in str(exc_info.value)
+
+
+def test_stack_validation_rejects_auto_worker():
+    vllm_config = _vllm_like_config(
+        afd={"role": "attention"},
+        worker_cls="auto",
+    )
+
+    with pytest.raises(ValueError, match="remained 'auto'") as exc_info:
+        assert_compatible_afd_stack(vllm_config, caller="test")
+    assert "ensure the AFD general plugin is loaded" in str(exc_info.value)
+
+
+def test_stack_validation_accepts_npu_worker_override():
+    vllm_config = _vllm_like_config(
+        afd={
+            "role": "attention",
+            "connector": "CAMP2pAFDConnector",
+        },
+        worker_cls=NPU_ATTENTION_WORKER_FQCN,
+    )
+
+    config = assert_compatible_afd_stack(
+        vllm_config,
+        caller="test",
+        expected_role="attention",
+        expected_worker_qualname_override=NPU_ATTENTION_WORKER_FQCN,
+    )
+
+    assert config.connector == "CAMP2pAFDConnector"
+
+
+def test_async_connector_requires_npu_attention_worker():
+    vllm_config = _vllm_like_config(
+        afd={
+            "role": "attention",
+            "connector": "CAMAsyncAFDConnector",
+        },
+        worker_cls=ATTENTION_WORKER_FQCN,
+    )
+
+    with pytest.raises(ValueError, match="requires Ascend NPU worker"):
+        assert_compatible_afd_stack(
+            vllm_config,
+            caller="test",
+            expected_role="attention",
+        )
+
+    vllm_config.parallel_config.worker_cls = NPU_ATTENTION_WORKER_FQCN
+    config = assert_compatible_afd_stack(
+        vllm_config,
+        caller="test",
+        expected_role="attention",
+    )
+    assert config.connector == "CAMAsyncAFDConnector"
+
+
+def test_async_connector_requires_npu_ffn_worker():
+    vllm_config = _vllm_like_config(
+        afd={
+            "role": "ffn",
+            "connector": "CAMAsyncAFDConnector",
+        },
+        worker_cls=NPU_FFN_WORKER_FQCN,
+    )
+
+    config = assert_compatible_afd_stack(
+        vllm_config,
+        caller="test",
+        expected_role="ffn",
+    )
+
+    assert config.connector == "CAMAsyncAFDConnector"
