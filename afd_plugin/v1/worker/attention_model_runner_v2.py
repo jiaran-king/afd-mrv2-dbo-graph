@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from types import MethodType
@@ -44,6 +45,8 @@ from afd_plugin.validation import validate_gpu_model_runner_v2_config
 
 if TYPE_CHECKING:
     from vllm.v1.worker.gpu.pcp_manager import PCPManager
+
+_AFD_EXECUTION_LOG_INTERVAL = 128
 
 _AFD_FULLGRAPH_HOOK_MARKER = "_afd_fullgraph_replay_hook_active"
 
@@ -246,7 +249,8 @@ def _use_afd_fullgraph_replay_hook(
     # Patch reason: native FULL replay bypasses ForwardContext creation, so the
     # execute-scoped AFD provider cannot publish runtime control.
     # Patch functionality: wrap only this manager instance and publish one
-    # ordinary padded control payload immediately before each native replay.
+    # ordinary padded control payload immediately before each native replay;
+    # record FULL only after the native replay call succeeds.
     # Signature: matches vLLM v0.30.0 ModelCudaGraphManager.run_fullgraph exactly.
     # Upstream source: vllm/v1/worker/gpu/cudagraph_utils.py,
     # ModelCudaGraphManager.run_fullgraph; commit
@@ -265,7 +269,9 @@ def _use_afd_fullgraph_replay_hook(
             # prepare seam sent their complete control payload.
             assert runner._afd_pending_metadata is not None
             assert runner._afd_pending_metadata.num_stages == desc.num_ubatches
-            return original_run_fullgraph(desc)
+            result = original_run_fullgraph(desc)
+            runner._afd_execution_mode = "FULL"
+            return result
         previous_is_graph_replaying = getattr(
             runner,
             "_afd_is_graph_replaying",
@@ -285,6 +291,7 @@ def _use_afd_fullgraph_replay_hook(
                 None,
             )
             result = original_run_fullgraph(desc)
+            runner._afd_execution_mode = "FULL"
         finally:
             runner._afd_is_graph_replaying = previous_is_graph_replaying
         # ### PATCH END: publish one AFD pre-replay payload.
@@ -388,6 +395,11 @@ class AFDAttentionModelRunnerV2(AFDMetadataProviderMixin, GPUModelRunnerV2):
             self._afd_pending_metadata: AFDForwardContextMetadata | None = None
             self._afd_suppress_metadata_send = False
             self._afd_transaction_counter = 0
+            self._afd_execution_counts: dict[tuple[str, str, int], int] = {}
+            self._afd_previous_execution: (
+                tuple[str, str, int, tuple[int, ...]] | None
+            ) = None
+            self._afd_consecutive_executions = 0
             self.prof = create_afd_gpu_profiler("attention")
         except BaseException:
             try:
@@ -502,7 +514,8 @@ class AFDAttentionModelRunnerV2(AFDMetadataProviderMixin, GPUModelRunnerV2):
     # Patch reason: native V2 creates ForwardContext inside execute_model, so
     # AFD must install its sidecar at that exact context-construction seam.
     # Patch functionality: delegate all request/input/Attention/KV/sampling/
-    # output work to native V2 while temporarily installing AFD metadata.
+    # output work to native V2 while temporarily installing AFD metadata,
+    # then emit sparse evidence of the completed execution mode and stages.
     # Signature: matches vLLM v0.30.0 GPUModelRunnerV2.execute_model exactly,
     # including the 0.30.0 trailing context_len and valid_dummy_state_slots
     # parameters, which are forwarded by keyword.
@@ -526,11 +539,12 @@ class AFDAttentionModelRunnerV2(AFDMetadataProviderMixin, GPUModelRunnerV2):
     ) -> ModelRunnerOutput | IntermediateTensors | None:
         # ### PATCH START: scope AFD metadata provider/replay and profiler step.
         step_afd_gpu_profiler(self.prof)
+        self._afd_execution_mode = "eager"
         with _use_afd_execution_context(
             self,
             int(scheduler_output.total_num_scheduled_tokens),
         ):
-            return super().execute_model(
+            output = super().execute_model(
                 scheduler_output,
                 intermediate_tensors,
                 dummy_run=dummy_run,
@@ -539,7 +553,39 @@ class AFDAttentionModelRunnerV2(AFDMetadataProviderMixin, GPUModelRunnerV2):
                 context_len=context_len,
                 valid_dummy_state_slots=valid_dummy_state_slots,
             )
+            phase = "profile" if is_profile else "dummy" if dummy_run else "live"
+            self._record_afd_execution(phase)
+            return output
         # ### PATCH END: scope AFD metadata provider/replay and profiler step.
+
+    def _record_afd_execution(self, phase: str) -> None:
+        metadata = self._afd_pending_metadata
+        if metadata is None:
+            return
+        key = (phase, self._afd_execution_mode, metadata.num_stages)
+        count = self._afd_execution_counts.get(key, 0) + 1
+        self._afd_execution_counts[key] = count
+        layout = (*key, tuple(metadata.tokens_lens))
+        self._afd_consecutive_executions = (
+            self._afd_consecutive_executions + 1
+            if layout == self._afd_previous_execution
+            else 1
+        )
+        self._afd_previous_execution = layout
+        # Report completed executions sparsely, never inside capture or per token.
+        if count <= 2 or count % _AFD_EXECUTION_LOG_INTERVAL == 0:
+            logging.getLogger(__name__).info(
+                "AFD execution: runner=MRV2 phase=%s mode=%s stages=%d "
+                "tokens=%s real_tokens=%s transaction=%s count=%d consecutive=%d",
+                phase,
+                self._afd_execution_mode,
+                metadata.num_stages,
+                metadata.tokens_lens,
+                metadata.tokens_unpadded_lens,
+                metadata.transaction_id,
+                count,
+                self._afd_consecutive_executions,
+            )
 
     # Patch reason: native V2 shutdown does not know about AFD's profiler,
     # connector, or pending metadata sidecar.

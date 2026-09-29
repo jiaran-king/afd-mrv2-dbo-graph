@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -141,6 +142,7 @@ def main() -> int:
     processes_by_role: dict[str, subprocess.Popen[str]] = {}
     log_threads: list[threading.Thread] = []
     dbo_split_steps: list[float] = []
+    mrv2_execution_events: list[tuple[float, str, str]] = []
     dbo_eval_started_at: float | None = None
     handled_signals = (signal.SIGTERM, signal.SIGINT)
     previous_handlers = {signum: signal.getsignal(signum) for signum in handled_signals}
@@ -201,7 +203,9 @@ def main() -> int:
             )
             processes.append(process)
             processes_by_role[role] = process
-            log_threads.append(stream_output(role, process, dbo_split_steps))
+            log_threads.append(
+                stream_output(role, process, dbo_split_steps, mrv2_execution_events)
+            )
             ensure_alive(process, f"{label} process exited during startup")
 
         wait_for_openai_api(args, processes)
@@ -216,7 +220,14 @@ def main() -> int:
                 dbo_eval_started_at = time.time()
             run_gsm8k_evaluation(args)
         if args.enable_dbo:
-            assert_dbo_live_split_coverage(dbo_split_steps, dbo_eval_started_at, args)
+            if args.use_v2_model_runner:
+                assert_mrv2_dbo_execution(
+                    mrv2_execution_events, dbo_eval_started_at, args
+                )
+            else:
+                assert_dbo_live_split_coverage(
+                    dbo_split_steps, dbo_eval_started_at, args
+                )
 
         ensure_processes_alive(processes)
     finally:
@@ -928,6 +939,57 @@ def assert_dbo_live_split_coverage(
     )
 
 
+def assert_mrv2_dbo_execution(
+    events: list[tuple[float, str, str]],
+    eval_started_at: float,
+    args: argparse.Namespace,
+) -> None:
+    """Require completed live MRV2 stages and their matching FFN execution."""
+    attention_mode = "FULL" if args.cuda_graph_full_decode_only else "eager"
+    ffn_mode = "replay" if args.cuda_graph_full_decode_only else "eager"
+    attention_layouts = []
+    ffn_layouts = []
+    for received_at, role, line in events:
+        if received_at < eval_started_at:
+            continue
+        if role == "attention" and (
+            f"runner=MRV2 phase=live mode={attention_mode} stages=2 " in line
+        ):
+            real_match = re.search(r"real_tokens=(\[[^]]+\])", line)
+            tokens_match = re.search(r"\btokens=(\[[^]]+\])", line)
+            consecutive_match = re.search(r"consecutive=(\d+)", line)
+            if real_match is None or tokens_match is None:
+                continue
+            if not all(count > 0 for count in json.loads(real_match[1])):
+                continue
+            if args.cuda_graph_full_decode_only and (
+                consecutive_match is None or int(consecutive_match[1]) < 2
+            ):
+                continue
+            tokens = json.loads(tokens_match[1])
+            attention_layouts.append(
+                [
+                    [stage, [count] * args.num_attention_ranks]
+                    for stage, count in enumerate(tokens)
+                ]
+            )
+        if role == "ffn" and f"runner=FFN mode={ffn_mode} stages=2 " in line:
+            layout_match = re.search(r"layout=(\[.*\]) count=", line)
+            if layout_match is not None:
+                ffn_layouts.append(json.loads(layout_match[1]))
+    if any(layout in ffn_layouts for layout in attention_layouts):
+        print(
+            f"[dbo-coverage] MRV2 live two-stage {attention_mode} and FFN "
+            f"{ffn_mode} confirmed with matching DP layouts"
+        )
+        return
+    raise RuntimeError(
+        f"MRV2 DBO lacks live two-stage {attention_mode} and matching FFN "
+        f"{ffn_mode} evidence in the evaluation window; FULL requires "
+        "consecutive replays and both microbatches must contain real tokens"
+    )
+
+
 def run_completion_evaluation(args: argparse.Namespace) -> None:
     """Send the async CAM smoke request and require one returned choice."""
     payload = json.dumps(
@@ -1034,11 +1096,14 @@ def stream_output(
     name: str,
     process: subprocess.Popen[str],
     dbo_split_steps: list[float] | None = None,
+    mrv2_execution_events: list[tuple[float, str, str]] | None = None,
 ) -> threading.Thread:
     def worker() -> None:
         assert process.stdout is not None
         for line in process.stdout:
             print(f"[{name}] {line}", end="")
+            if mrv2_execution_events is not None and "AFD execution: " in line:
+                mrv2_execution_events.append((time.time(), name, line))
             if (
                 dbo_split_steps is not None
                 and name == "attention"

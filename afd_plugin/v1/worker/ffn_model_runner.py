@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +52,9 @@ if TYPE_CHECKING:
     from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec
 
 
+_AFD_EXECUTION_LOG_INTERVAL = 128
+
+
 class GPUFFNModelRunner(LoRAModelRunnerMixin):
     """FFN model runner for AFD GPU execution.
 
@@ -92,6 +97,7 @@ class GPUFFNModelRunner(LoRAModelRunnerMixin):
             self.afd_cudagraph_policy.enable_ffn_graph_cache,
         )
         self._cuda_graphs: dict[tuple, dict[str, Any]] = {}
+        self._afd_execution_counts: dict[tuple[str, int], int] = {}
         self._graph_memory_pool: Any | None = None
         self.prof = create_afd_gpu_profiler("ffn")
 
@@ -171,13 +177,23 @@ class GPUFFNModelRunner(LoRAModelRunnerMixin):
         )
         if run_mode is AFDGraphRunMode.REPLAY:
             cuda_graph_info["graph"].replay()
-            return None
-
-        self._ffn_forward(
-            dp_metadata_list=dp_metadata_list,
-            is_graph_capturing=is_graph_capturing,
-            is_warmup=is_warmup,
-        )
+        else:
+            self._ffn_forward(
+                dp_metadata_list=dp_metadata_list,
+                is_graph_capturing=is_graph_capturing,
+                is_warmup=is_warmup,
+            )
+        key = (run_mode.value, len(dp_metadata_list))
+        count = self._afd_execution_counts.get(key, 0) + 1
+        self._afd_execution_counts[key] = count
+        if count <= 2 or count % _AFD_EXECUTION_LOG_INTERVAL == 0:
+            logging.getLogger(__name__).info(
+                "AFD execution: runner=FFN mode=%s stages=%d layout=%s count=%d",
+                run_mode.value,
+                len(dp_metadata_list),
+                json.dumps(graph_key, separators=(",", ":")),
+                count,
+            )
         return None
 
     def _ffn_forward(

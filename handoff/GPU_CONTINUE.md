@@ -130,8 +130,9 @@ Ascend 容器，执行内容仅为 CPU 逻辑/mock；没有分配 GPU/NPU、加�
 
 以下命令必须在完成服务器健康检查、取得四卡 `gpu run` 配额后执行；不要在
 未分配的 SSH 会话中直接加载模型。它们是待执行命令，不是通过记录。先运行 B，
-再分别运行 E、G 并检查结果；当前 E2E 的旧 split 文本检查仍需补足 MRV2 的实际
-live/eager/FULL 与 A/F 对应证据，不能凭 pytest 成功就宣布最终验收。
+再分别运行 E、G 并检查结果。MRV2 已独立检查评测窗口内的真实双阶段 eager/FULL
+及匹配的 FFN 模式和 DP 布局，G 还要求连续 replay；仍需检查题目级差异和设备
+trace，不能只凭 pytest 成功就宣布最终验收。
 
 ```bash
 RUNTIME=/data/zhouziheng/pr407-gpu-regression-20260929/runtime
@@ -155,3 +156,17 @@ python -m pytest -q -s 'tests/e2e/models/deepseek_v2_lite/test_deepseek_v2_lite.
 控制日志与调度记录位于远程 `evidence/unit-controller.log`、
 `evidence/scheduler-queued.txt`、`evidence/scheduler-after.txt`。
 资源可用后需先运行交接单测，再进行 B/E/G 实机验证；不跳过这些步骤。
+
+
+用户要求继续实机验收后，已于 2026-09-29 重新提交唯一四卡任务 `d99401f0`，
+控制进程 `2690692`，排队上限 6 小时、执行上限 4 小时。任务先做运行时单测，
+再按 B/E/G 顺序执行，G 复用已有 profiler 采集 8 个 active steps。日志入口为
+`evidence/acceptance-controller.log`，分配后 `evidence/current-run.txt` 指向
+本次目录。失败先核验清理并读日志，最多允许两次有实际修复的定向重试。
+本对话已启用自动跟进 `gpu-dbo`，持续检查进展和处理结果，资源等待不视为完成。
+
+新增执行证据只在原有 runner 中累计计数并稀疏记录（初始两次、之后每128次），
+不加 device synchronize、barrier、线程锁或新执行器。Attention 的 FULL 标志
+来自成功调用实际 `run_fullgraph`，live/dummy/profile 分开；FFN 记录实际选择的
+模式和 graph key。命令/证据解析单测本地 **174 passed**；运行时新增日志测试
+尚待本次 H200 配额执行。这些更改不构成 GPU 实测通过声明。

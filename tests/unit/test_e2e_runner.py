@@ -1848,3 +1848,59 @@ def test_v2_dbo_comparison_rejects_npu(monkeypatch, scenario):
     runner.configure_scenario(args)
     with pytest.raises(ValueError, match="require GPU"):
         runner.validate_topology(args, ["0", "1"], ["2", "3"])
+
+
+@pytest.mark.parametrize("graph", [False, True])
+def test_mrv2_dbo_evidence_requires_live_matching_execution(graph):
+    args = _args()
+    args.scenario = "afd-v2-graph-dbo-dp2" if graph else "afd-v2-eager-dbo-dp2"
+    runner.configure_scenario(args)
+    mode = "FULL" if graph else "eager"
+    ffn_mode = "replay" if graph else "eager"
+    attention = (
+        f"AFD execution: runner=MRV2 phase=live mode={mode} stages=2 "
+        "tokens=[4, 4] real_tokens=[4, 2] transaction=10 count=2 consecutive=2"
+    )
+    ffn = (
+        f"AFD execution: runner=FFN mode={ffn_mode} stages=2 "
+        "layout=[[0,[4,4]],[1,[4,4]]] count=128"
+    )
+    events = [(101.0, "attention", attention), (102.0, "ffn", ffn)]
+    runner.assert_mrv2_dbo_execution(events, 100.0, args)
+    # Capture/profile, padding-only tails, unrelated FFN layouts and pre-eval
+    # executions cannot substitute for completed live two-stage work.
+    for invalid_attention in (
+        attention.replace("phase=live", "phase=dummy"),
+        attention.replace("phase=live", "phase=profile"),
+        attention.replace("real_tokens=[4, 2]", "real_tokens=[4, 0]"),
+        attention.replace("runner=MRV2", "runner=MRV1"),
+    ):
+        with pytest.raises(RuntimeError, match="lacks live two-stage"):
+            runner.assert_mrv2_dbo_execution(
+                [(101.0, "attention", invalid_attention), events[1]], 100.0, args
+            )
+    with pytest.raises(RuntimeError, match="lacks live two-stage"):
+        runner.assert_mrv2_dbo_execution(events, 103.0, args)
+    with pytest.raises(RuntimeError, match="lacks live two-stage"):
+        runner.assert_mrv2_dbo_execution(
+            [events[0], (102.0, "ffn", ffn.replace("[4,4]", "[3,3]"))], 100.0, args
+        )
+    if graph:
+        for invalid_attention in (
+            attention.replace("mode=FULL", "mode=eager"),
+            attention.replace("consecutive=2", "consecutive=1"),
+        ):
+            with pytest.raises(RuntimeError, match="lacks live two-stage"):
+                runner.assert_mrv2_dbo_execution(
+                    [(101.0, "attention", invalid_attention), events[1]], 100.0, args
+                )
+
+
+def test_stream_output_records_sparse_execution_evidence(monkeypatch):
+    events = []
+    line = "AFD execution: runner=FFN mode=replay stages=2 layout=[] count=128\n"
+    process = argparse.Namespace(stdout=io.StringIO(line))
+    monkeypatch.setattr(runner.time, "time", lambda: 101.0)
+    thread = runner.stream_output("ffn", process, mrv2_execution_events=events)
+    thread.join(timeout=5)
+    assert events == [(101.0, "ffn", line)]

@@ -18,8 +18,8 @@ from vllm.forward_context import (  # noqa: E402
 from vllm.v1.worker import gpu_model_runner as native_v1  # noqa: E402
 from vllm.v1.worker.gpu import cudagraph_utils, dp_utils  # noqa: E402
 from vllm.v1.worker.gpu import model_runner as native_v2  # noqa: E402
-from vllm.v1.worker.gpu_worker import Worker  # noqa: E402
 from vllm.v1.worker.gpu.ubatch_utils import UBatchState  # noqa: E402
+from vllm.v1.worker.gpu_worker import Worker  # noqa: E402
 from vllm.v1.worker.ubatch_utils import UBatchSlice  # noqa: E402
 
 from afd_plugin.model_executor.models import (  # noqa: E402
@@ -211,6 +211,9 @@ def _runner_for_metadata(
     runner._afd_pending_metadata = None
     runner._afd_suppress_metadata_send = False
     runner._afd_transaction_counter = 0
+    runner._afd_execution_counts = {}
+    runner._afd_previous_execution = None
+    runner._afd_consecutive_executions = 0
     runner.ubatch_runner = None
     runner.prof = _StepProfiler()
     runner.cudagraph_manager = SimpleNamespace(run_fullgraph=lambda _desc: None)
@@ -316,6 +319,7 @@ def test_v2_fullgraph_replay_hook_restores_manager_instance_after_success():
     with v2_runner_module._use_afd_fullgraph_replay_hook(runner, 3):
         assert cudagraph_utils.CudaGraphManager.run_fullgraph is class_replay
         assert runner.cudagraph_manager.run_fullgraph(descriptor) == 8
+        assert runner._afd_execution_mode == "FULL"
 
     assert runner.cudagraph_manager.__dict__["run_fullgraph"] is native_bound_replay
     assert cudagraph_utils.CudaGraphManager.run_fullgraph is class_replay
@@ -2071,3 +2075,24 @@ def test_non_afd_model_config_and_native_runner_identity_are_unchanged(
 
     assert _NativeRunnerSentinel.instances == 1
     assert native_module.GPUModelRunner is _NativeRunnerSentinel
+
+
+
+def test_mrv2_execution_evidence_separates_dummy_and_live_replays(caplog):
+    runner = _runner_for_metadata([])
+    runner._afd_pending_metadata = runner.build_afd_metadata(None, 8)
+    runner._afd_pending_metadata.num_stages = 2
+    runner._afd_pending_metadata.tokens_lens = [4, 4]
+    runner._afd_pending_metadata.tokens_unpadded_lens = [4, 2]
+    runner._afd_execution_mode = "FULL"
+    with caplog.at_level("INFO"):
+        runner._record_afd_execution("dummy")
+        runner._record_afd_execution("live")
+        runner._record_afd_execution("live")
+    assert "phase=live mode=FULL stages=2" in caplog.text
+    assert "real_tokens=[4, 2]" in caplog.text
+    assert "count=2 consecutive=2" in caplog.text
+    assert runner._afd_execution_counts[("dummy", "FULL", 2)] == 1
+    runner._record_afd_execution("profile")
+    runner._record_afd_execution("live")
+    assert runner._afd_consecutive_executions == 1

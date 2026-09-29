@@ -151,6 +151,7 @@ def _runner_with_connector_and_model(model, *, num_layers=1):
     runner.num_layers = num_layers
     runner.use_cuda_graph = False
     runner._cuda_graphs = {}
+    runner._afd_execution_counts = {}
     runner.prof = None
     return runner
 
@@ -611,7 +612,8 @@ def test_ffn_runner_graph_key_preserves_attention_peer_shapes():
     assert first_key != second_key
 
 
-def test_ffn_runner_replays_cuda_graph_when_key_exists():
+def test_ffn_runner_replays_cuda_graph_when_key_exists(caplog):
+    caplog.set_level("INFO")
     runner = _runner_with_connector_and_model(_FakeModel())
     runner.use_cuda_graph = True
     graph = _FakeGraph()
@@ -627,6 +629,8 @@ def test_ffn_runner_replays_cuda_graph_when_key_exists():
 
     assert graph.replay_count == 1
     assert runner.connector.ffn_outputs == []
+
+    assert "runner=FFN mode=replay stages=1" in caplog.text
 
 
 def test_ffn_runner_skips_replay_when_attention_is_eager():
