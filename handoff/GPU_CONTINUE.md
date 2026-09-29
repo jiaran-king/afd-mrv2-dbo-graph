@@ -211,4 +211,23 @@ CUDA13.0、NCCL2.29.7、SM90，目标 base 模型revision及GSM8K train7473/test
 
 本轮目录：`evidence/acceptance-20260929T201853`。六个局部测试文件在目标环境
 运行 **341 passed**（14项上游torch弃用警告）；units结果记录无残留进程、无
-清理错误、无新增共享内存。控制器随后进入B档，B/E/G尚未取得最终结果。
+清理错误、无新增共享内存。
+
+4124 后续实测进展（仍未完成全部验收）：
+
+- B-1通过：GSM8K **39/128（30.46875%）**，阶段清理无进程、GPU、端口或
+  新增共享内存残留。
+- E-1完成 **40/128（31.25%）**，但执行证据断言失败，不能计为通过。
+  原因是vLLM默认日志配置仅处理`vllm`命名空间，AFD的INFO执行记录未输出。
+  `b1479d5`为比较场景添加E2E日志配置，未更改模型/runner执行逻辑；新增独立
+  Python进程日志回归测试，本地和4124分配内执行器测试均 **175 passed**。
+- E-2在pytest准备阶段因复用`--basetemp E`删除旧目录失败（Errno39/
+  FileExistsError），未加载模型。确认清理后，在有效分配内原子重命名旧目录，
+  E-3继续本控制器最后一次允许尝试。E-1完整样本已保存在
+  `E-attempt1-preserved`；E-2旧目录保存在`E-attempt2-dir`。
+- E-3已记录真实`phase=live mode=eager stages=2 tokens=[3,3]`
+  `real_tokens=[3,3]`，两个Attention rank与两个FFN rank均有匹配
+  `layout=[[0,[3,3]],[1,[3,3]]]`，但仍须以最终断言/准确率/清理结果结案。
+
+下一步读`E-3-result.json`及`G-1.log`。G仍需连续真实FULL、匹配FFN replay及
+profiler设备交错证据。B/E/G需逐题比较，有精度差异则重放差异样本。
