@@ -125,3 +125,33 @@ Ascend 容器，执行内容仅为 CPU 逻辑/mock；没有分配 GPU/NPU、加�
   GPU/NPU validator 和 graph policy；不构成运行时集成证据。
 - 新场景及默认受控评测条件见 `tests/e2e/README.md`。本次还未得到 GPU
   B/E/G 结果，不能宣称 DBO eager 或双阶段 FULL replay 已通过。
+
+### 待运行的 B/E/G 命令
+
+以下命令必须在完成服务器健康检查、取得四卡 `gpu run` 配额后执行；不要在
+未分配的 SSH 会话中直接加载模型。它们是待执行命令，不是通过记录。先运行 B，
+再分别运行 E、G 并检查结果；当前 E2E 的旧 split 文本检查仍需补足 MRV2 的实际
+live/eager/FULL 与 A/F 对应证据，不能凭 pytest 成功就宣布最终验收。
+
+```bash
+RUNTIME=/data/zhouziheng/pr407-gpu-regression-20260929/runtime
+export PATH="$RUNTIME/bin:$PATH"
+export AFD_E2E_BACKEND=gpu
+export AFD_E2E_DEVICES="$CUDA_VISIBLE_DEVICES"
+export AFD_GPU_E2E_VLLM_BIN="$RUNTIME/bin/vllm"
+export AFD_GPU_E2E_MODEL=/data/models/hub/models--deepseek-ai--Deepseek-V2-Lite/snapshots/604d5664dddd88a0433dbae533b7fe9472482de0
+export HF_HOME=/data/zhouziheng/.cache/huggingface
+export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export AFD_GSM8K_LIMIT=128
+export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4
+# 在本任务代码目录运行；pytest 的独立输出目录应位于本任务 evidence 下。
+python -m pytest -q -s 'tests/e2e/models/deepseek_v2_lite/test_deepseek_v2_lite.py::test_deepseek_v2_lite[afd-v2-eager-dp2]'
+python -m pytest -q -s 'tests/e2e/models/deepseek_v2_lite/test_deepseek_v2_lite.py::test_deepseek_v2_lite[afd-v2-eager-dbo-dp2]'
+python -m pytest -q -s 'tests/e2e/models/deepseek_v2_lite/test_deepseek_v2_lite.py::test_deepseek_v2_lite[afd-v2-graph-dbo-dp2]'
+```
+
+本轮 H200 调度请求 `408d77ed`（1 GPU，等待上限 10 分钟，运行上限 15 分钟）
+返回 `wait timeout exceeded`，未获得配额，预检脚本和四个运行时单测均未启动。
+控制日志与调度记录位于远程 `evidence/unit-controller.log`、
+`evidence/scheduler-queued.txt`、`evidence/scheduler-after.txt`。
+资源可用后需先运行交接单测，再进行 B/E/G 实机验证；不跳过这些步骤。
