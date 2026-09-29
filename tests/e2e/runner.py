@@ -57,7 +57,15 @@ V2_SCENARIOS = (
     "afd-v2-graph-1a1f",
     "afd-v2-graph-dp2",
     "afd-v2-graph-tp2",
+    "afd-v2-eager-dbo-dp2",
+    "afd-v2-graph-dbo-dp2",
 )
+V2_DBO_COMPARISON_SCENARIOS = frozenset(
+    ("afd-v2-eager-dp2", "afd-v2-eager-dbo-dp2", "afd-v2-graph-dbo-dp2"),
+)
+V2_DBO_SAMPLE_LIMIT = 128
+V2_DBO_MAX_NUM_SEQS = 8
+V2_DBO_MAX_BATCHED_TOKENS = 4096
 V2_SINGLE_RANK_SCENARIOS = frozenset(
     ("afd-v2-eager-1a1f", "afd-v2-graph-1a1f"),
 )
@@ -446,6 +454,8 @@ def configure_scenario(args: argparse.Namespace) -> None:
         "afd-v2-graph-1a1f": (False, True, False, 1, 1),
         "afd-v2-graph-dp2": (False, True, False, 2, 2),
         "afd-v2-graph-tp2": (False, True, False, 2, 2),
+        "afd-v2-eager-dbo-dp2": (False, False, True, 2, 2),
+        "afd-v2-graph-dbo-dp2": (False, True, True, 2, 2),
     }
     baseline, use_graph, enable_dbo, attention_ranks, ffn_ranks = scenario_settings[
         args.scenario
@@ -713,12 +723,23 @@ def build_vllm_command(
                 "--no-async-scheduling",
             ],
         )
-    if args.cuda_graph_full_decode_only:
-        capture_size = str(args.cudagraph_capture_size)
+    if args.scenario in V2_DBO_COMPARISON_SCENARIOS:
+        # Keep scheduling identical for the no-DBO, eager DBO and graph DBO
+        # comparison, including enough prefill space with chunking disabled.
         cmd.extend(
             [
                 "--max-num-seqs",
-                capture_size,
+                str(V2_DBO_MAX_NUM_SEQS),
+                "--max-num-batched-tokens",
+                str(V2_DBO_MAX_BATCHED_TOKENS),
+            ],
+        )
+    if args.cuda_graph_full_decode_only:
+        capture_size = str(args.cudagraph_capture_size)
+        if args.scenario not in V2_DBO_COMPARISON_SCENARIOS:
+            cmd.extend(["--max-num-seqs", capture_size])
+        cmd.extend(
+            [
                 "--max-cudagraph-capture-size",
                 capture_size,
                 "--cudagraph-capture-sizes",
@@ -827,12 +848,15 @@ def run_gsm8k_evaluation(args: argparse.Namespace) -> None:
     """Run the configured GSM8K workload against the scenario's public API."""
     if args.gsm8k_output_path is None:
         raise RuntimeError("--gsm8k-output-path is required for GSM8K scenarios")
+    is_v2_dbo_comparison = args.scenario in V2_DBO_COMPARISON_SCENARIOS
     configured_limit = os.environ.get(
         GSM8K_LIMIT_ENV,
-        str(DEFAULT_GSM8K_SAMPLE_LIMIT),
+        str(
+            V2_DBO_SAMPLE_LIMIT if is_v2_dbo_comparison else DEFAULT_GSM8K_SAMPLE_LIMIT
+        ),
     )
     sample_limit = None if configured_limit == "all" else int(configured_limit)
-    if args.enable_dbo and sample_limit is not None:
+    if (args.enable_dbo or is_v2_dbo_comparison) and sample_limit is not None:
         sample_limit = max(sample_limit, DBO_EVAL_MIN_SAMPLES)
     expected_sample_count = (
         GSM8K_FULL_SAMPLE_COUNT if sample_limit is None else sample_limit
@@ -845,7 +869,7 @@ def run_gsm8k_evaluation(args: argparse.Namespace) -> None:
         if args.scenario == ASYNC_UBATCH_SCENARIO
         else {}
     )
-    if args.enable_dbo:
+    if args.enable_dbo or is_v2_dbo_comparison:
         scenario_options["num_concurrent"] = DBO_EVAL_NUM_CONCURRENT
     role = "baseline" if args.baseline else "attention"
     results = _run_lm_eval(

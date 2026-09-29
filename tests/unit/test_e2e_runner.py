@@ -606,7 +606,9 @@ def test_v2_scenarios_build_exact_commands(
         assert ("--enforce-eager" in command) is not uses_graph
         assert ("--compilation-config" in command) is uses_graph
         assert "--enable-dbo" not in command
-        assert "--max-num-batched-tokens" not in command
+        assert ("--max-num-batched-tokens" in command) is (
+            scenario in runner.V2_DBO_COMPARISON_SCENARIOS
+        )
         assert "--no-enable-prefix-caching" in command
         assert "--no-enable-chunked-prefill" in command
         assert "--no-async-scheduling" in command
@@ -1731,9 +1733,12 @@ def test_stream_output_records_live_npu_split_control_metadata(monkeypatch):
     )
     process: Any = argparse.Namespace(
         stdout=io.StringIO(
-            control_entry + "is_graph_capturing=False is_warmup=True\n"
-            + control_entry + "is_graph_capturing=True is_warmup=False\n"
-            + control_entry + "is_graph_capturing=False is_warmup=False\n"
+            control_entry
+            + "is_graph_capturing=False is_warmup=True\n"
+            + control_entry
+            + "is_graph_capturing=True is_warmup=False\n"
+            + control_entry
+            + "is_graph_capturing=False is_warmup=False\n"
         ),
     )
     monkeypatch.setattr(runner.time, "time", lambda: 101.0)
@@ -1768,3 +1773,78 @@ def test_assert_dbo_live_split_coverage_fails_without_evidence(monkeypatch):
 
     with pytest.raises(RuntimeError, match="no live request was ever split"):
         runner.assert_dbo_live_split_coverage([], 100.0, args)
+
+
+@pytest.mark.parametrize("scenario", sorted(runner.V2_DBO_COMPARISON_SCENARIOS))
+def test_v2_dbo_comparison_uses_controlled_commands(monkeypatch, scenario):
+    args = _args()
+    args.scenario = scenario
+    runner.configure_scenario(args)
+    runner.validate_topology(args, ["0", "1"], ["2", "3"])
+    monkeypatch.setenv("VLLM_USE_V2_MODEL_RUNNER", "0")
+    for role in ("attention", "ffn"):
+        command = runner.build_vllm_command(args, role=role)
+        assert (
+            runner.build_env("0,1", args, role=role)["VLLM_USE_V2_MODEL_RUNNER"] == "1"
+        )
+        assert command[command.index("--data-parallel-size") + 1] == "2"
+        assert command[command.index("--tensor-parallel-size") + 1] == "1"
+        assert command.count("--max-num-seqs") == 1
+        assert command[command.index("--max-num-seqs") + 1] == "8"
+        assert command[command.index("--max-num-batched-tokens") + 1] == "4096"
+        assert "--no-enable-prefix-caching" in command
+        assert "--no-enable-chunked-prefill" in command
+        assert "--no-async-scheduling" in command
+        assert ("--enable-dbo" in command) == (scenario != "afd-v2-eager-dp2")
+        if args.enable_dbo:
+            assert command[command.index("--dbo-decode-token-threshold") + 1] == "2"
+            assert command[command.index("--dbo-prefill-token-threshold") + 1] == "8"
+        graph = scenario == "afd-v2-graph-dbo-dp2"
+        assert ("--enforce-eager" in command) is not graph
+        if graph:
+            assert json.loads(command[command.index("--compilation-config") + 1]) == {
+                "cudagraph_mode": "FULL_DECODE_ONLY",
+            }
+            assert command[command.index("--cudagraph-capture-sizes") + 1] == "8"
+        config = json.loads(command[command.index("--additional-config") + 1])["afd"]
+        assert config["role"] == role
+        assert config["connector"] == "P2pNcclAFDConnector"
+        assert config["num_attention_ranks"] == config["num_ffn_ranks"] == 2
+
+
+@pytest.mark.parametrize("scenario", sorted(runner.V2_DBO_COMPARISON_SCENARIOS))
+@pytest.mark.parametrize("limit, expected", [(None, 128), ("128", 128), ("7", 24)])
+def test_v2_dbo_comparison_uses_identical_evaluation(
+    monkeypatch, scenario, limit, expected
+):
+    args = _args()
+    args.scenario = scenario
+    runner.configure_scenario(args)
+    if limit is None:
+        monkeypatch.delenv("AFD_GSM8K_LIMIT", raising=False)
+    else:
+        monkeypatch.setenv("AFD_GSM8K_LIMIT", limit)
+    calls = []
+
+    def evaluate(*positional, **kwargs):
+        calls.append(kwargs)
+        return {
+            "n-samples": {"gsm8k": {"effective": expected}},
+            "results": {"gsm8k": {"exact_match": 0.5}},
+        }
+
+    monkeypatch.setattr(runner, "_run_lm_eval", evaluate)
+    runner.run_gsm8k_evaluation(args)
+    assert calls[0]["limit"] == expected
+    assert calls[0]["num_concurrent"] == 12
+    assert calls[0]["num_fewshot"] == 8
+
+
+@pytest.mark.parametrize("scenario", sorted(runner.V2_DBO_COMPARISON_SCENARIOS))
+def test_v2_dbo_comparison_rejects_npu(monkeypatch, scenario):
+    args = _args()
+    args.scenario = scenario
+    args.device_backend = "npu"
+    runner.configure_scenario(args)
+    with pytest.raises(ValueError, match="require GPU"):
+        runner.validate_topology(args, ["0", "1"], ["2", "3"])

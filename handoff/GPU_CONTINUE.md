@@ -2,9 +2,9 @@
 
 ## 范围与状态
 
-用户已将当前范围调整为 **只支持 GPU**，并授权将当前代码迁移到
-`jiaran-king/afd-mrv2-dbo-graph` 私有仓库。未经新的明确许可，禁止向公开
-仓库推送、创建公开 PR 或更改此仓库的私有属性。
+用户已将当前范围调整为 **只支持 GPU**。交接仓库
+`jiaran-king/afd-mrv2-dbo-graph` 已由用户改为公开；2026-09-29 用户授权在
+独立 `codex/` 分支提交并推送续做工作。不创建上游 PR，不改仓库可见性。
 
 这是正在实现的代码，**不是已通过实机验收的支持版本**。当前 validation
 仍拒绝 MRV2 + DBO。需完成下述核验后收敛支持校验，不能单纯删除报错。
@@ -16,7 +16,7 @@
   `4f74787e80da29d9f06adcbd14c03aa002dcc3f8`。
 - vLLM 目标：`ced6857afa0ea7b2e3f0846a62e1394e90f15607`（0.30）。
 - GPU 环境、CUDA、PyTorch、NCCL、模型权重版本尚需在目标机器实测固定。
-- 此私有仓库用两个普通提交保存上游源码快照与 GPU 增量，未修改公开上游。
+- 交接仓库用两个普通提交保存上游源码快照与 GPU 增量，未修改公开上游。
   基线快照不包含完整上游 Git 历史；首个提交的 tree 对应上述 AFD SHA。
 
 ## 已实现
@@ -38,7 +38,7 @@ cache，不重写 FFN 执行器。公共 mixin 的新方法仅由 MRV2 新入口
 ## 已知未完成项
 
 - GPU 上 B/E/G 均未运行，不能将 CPU/mock 测试视为 CUDA/NCCL 或模型精度证据。
-- 尚未开放 validation；现有 `afd-v2-*` E2E 场景不包含 MRV2 + DBO 组合。
+- 尚未开放 validation；开发分支已补 MRV2 + DBO E2E 场景，尚待实机运行。
   旧 `afd-graph-dbo-*` 场景属于 MRV1，不能拿它们作为本目标通过。
 - FFN graph cache 已以 stage ID 与各 DP token 数构成 key，代码层面可区分
   单/双阶段；仍需验证真实 A/F 两端连续 replay、输入刷新与通信匹配。
