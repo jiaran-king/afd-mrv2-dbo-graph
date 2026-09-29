@@ -1,0 +1,76 @@
+{
+  "attention-1": {
+    "base_ns": 1782967788000000000,
+    "kernels": 6786,
+    "graph_kernels": 6512,
+    "compute_us": 24643.955078125,
+    "nccl_compute_overlap_us": 0,
+    "steps": [
+      "ProfilerStep#301",
+      "ProfilerStep#302",
+      "ProfilerStep#303",
+      "ProfilerStep#304",
+      "ProfilerStep#305",
+      "ProfilerStep#306",
+      "ProfilerStep#307",
+      "ProfilerStep#308"
+    ]
+  },
+  "attention-0": {
+    "base_ns": 1782967788000000000,
+    "kernels": 6785,
+    "graph_kernels": 6512,
+    "compute_us": 24835.83203125,
+    "nccl_compute_overlap_us": 0,
+    "steps": [
+      "ProfilerStep#301",
+      "ProfilerStep#302",
+      "ProfilerStep#303",
+      "ProfilerStep#304",
+      "ProfilerStep#305",
+      "ProfilerStep#306",
+      "ProfilerStep#307",
+      "ProfilerStep#308"
+    ]
+  },
+  "ffn-1": {
+    "base_ns": 1782967788000000000,
+    "kernels": 8016,
+    "graph_kernels": 8000,
+    "compute_us": 52583.91796875,
+    "nccl_compute_overlap_us": 1358.6328125,
+    "steps": [
+      "ProfilerStep#301",
+      "ProfilerStep#302",
+      "ProfilerStep#303",
+      "ProfilerStep#304",
+      "ProfilerStep#305",
+      "ProfilerStep#306",
+      "ProfilerStep#307",
+      "ProfilerStep#308"
+    ]
+  },
+  "ffn-0": {
+    "base_ns": 1782967788000000000,
+    "kernels": 8016,
+    "graph_kernels": 8000,
+    "compute_us": 51172.3349609375,
+    "nccl_compute_overlap_us": 1330.2294921875,
+    "steps": [
+      "ProfilerStep#301",
+      "ProfilerStep#302",
+      "ProfilerStep#303",
+      "ProfilerStep#304",
+      "ProfilerStep#305",
+      "ProfilerStep#306",
+      "ProfilerStep#307",
+      "ProfilerStep#308"
+    ]
+  },
+  "cross_role_0": {
+    "compute_overlap_us": 14432.578125
+  },
+  "cross_role_1": {
+    "compute_overlap_us": 14515.017578125
+  }
+}

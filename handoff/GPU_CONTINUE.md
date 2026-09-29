@@ -231,3 +231,15 @@ CUDA13.0、NCCL2.29.7、SM90，目标 base 模型revision及GSM8K train7473/test
 
 下一步读`E-3-result.json`及`G-1.log`。G仍需连续真实FULL、匹配FFN replay及
 profiler设备交错证据。B/E/G需逐题比较，有精度差异则重放差异样本。
+
+
+## H20 最终范围结论（2026-09-29 21:04）
+
+约定的功能及128题阈值验收完成，结果见[h20-results/README.md](h20-results/README.md)。
+B/E/G分别39/41/40题正确；E真实双microbatch、G连续真实双阶段FULL与匹配FFN
+replay及profiler设备交错均已证实。4131补做6题各4次差异重放，三种模式均完成。
+4124与4131均COMPLETED、Exit0且精确清理确认。
+
+逐题数值等价不成立：B本身也有重复波动；64题G重放0/4而B/E为2/4和3/4，
+仍保留模式相关数值差异，不能宣称已证明无精度回归或全量GSM8K/全部GPU矩阵通过。
+详细答案、比较及设备时间统计已保存在h20-results；没有为此降低0.27阈值。
