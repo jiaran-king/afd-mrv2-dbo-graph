@@ -726,6 +726,9 @@ def build_vllm_command(
         "--additional-config",
         json.dumps(afd_config, separators=(",", ":")),
     ]
+    if args.scenario in V2_DBO_COMPARISON_SCENARIOS:
+        worker = "AFDAttentionWorker" if role == "attention" else "AFDFFNWorker"
+        cmd.extend(["--worker-cls", f"tests.e2e.mrv2_evidence.{worker}"])
     if args.use_v2_model_runner:
         cmd.extend(
             [
@@ -948,6 +951,7 @@ def assert_mrv2_dbo_execution(
     attention_mode = "FULL" if args.cuda_graph_full_decode_only else "eager"
     ffn_mode = "replay" if args.cuda_graph_full_decode_only else "eager"
     attention_layouts = {}
+    previous_attention = {}
     ffn_layouts = {}
     for received_at, role, line in events:
         if received_at < eval_started_at:
@@ -962,20 +966,21 @@ def assert_mrv2_dbo_execution(
         ):
             real_match = re.search(r"real_tokens=(\[[^]]+\])", line)
             tokens_match = re.search(r"\btokens=(\[[^]]+\])", line)
-            consecutive_match = re.search(r"consecutive=(\d+)", line)
-            if real_match is None or tokens_match is None:
+            count_match = re.search(r"count=(\d+)", line)
+            if real_match is None or tokens_match is None or count_match is None:
                 continue
             if not all(count > 0 for count in json.loads(real_match[1])):
-                continue
-            if args.cuda_graph_full_decode_only and (
-                consecutive_match is None or int(consecutive_match[1]) < 2
-            ):
                 continue
             tokens = json.loads(tokens_match[1])
             layout = tuple(
                 (stage, (count,) * args.num_attention_ranks)
                 for stage, count in enumerate(tokens)
             )
+            count = int(count_match[1])
+            previous = previous_attention.get(rank)
+            previous_attention[rank] = (count, layout)
+            if args.cuda_graph_full_decode_only and previous != (count - 1, layout):
+                continue
             attention_layouts.setdefault(layout, set()).add(rank)
         if role == "ffn" and f"runner=FFN mode={ffn_mode} stages=2 " in line:
             layout_match = re.search(r"layout=(\[.*\]) count=", line)
@@ -1078,13 +1083,6 @@ def build_env(
         env["VLLM_PLUGINS"] = "ascend,afd" if args.device_backend == "npu" else "afd"
     if args.enable_dbo:
         env["VLLM_LOGGING_LEVEL"] = "DEBUG"
-    if args.scenario in V2_DBO_COMPARISON_SCENARIOS:
-        # vLLM's default handler only covers its own namespace. Include AFD's
-        # execution records so the live MRV2/FFN evidence reaches the verifier.
-        env.setdefault(
-            "VLLM_LOGGING_CONFIG_PATH",
-            str(Path(__file__).with_name("mrv2_logging.json")),
-        )
     env["PYTHONUNBUFFERED"] = "1"
     if e2e_run_id is not None:
         if role is None:

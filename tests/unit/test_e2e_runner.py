@@ -1707,33 +1707,6 @@ def test_build_env_enables_debug_logging_for_dbo_scenarios(monkeypatch):
     assert "VLLM_LOGGING_LEVEL" not in plain_env
 
 
-def test_mrv2_logging_emits_afd_evidence_in_fresh_process(monkeypatch):
-    monkeypatch.delenv("VLLM_LOGGING_CONFIG_PATH", raising=False)
-    args = _args()
-    args.scenario = "afd-v2-eager-dbo-dp2"
-    runner.configure_scenario(args)
-    env = runner.build_env("0,1", args, role="attention")
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import json, logging, logging.config, os; "
-            "logging.config.dictConfig(json.load("
-            "open(os.environ['VLLM_LOGGING_CONFIG_PATH']))); "
-            "logging.getLogger('afd_plugin.v1.worker.attention_model_runner_v2')"
-            ".info('AFD execution: runner=MRV2'); "
-            "logging.getLogger('afd_plugin.v1.worker.ffn_model_runner')"
-            ".info('AFD execution: runner=FFN')",
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert "AFD execution: runner=MRV2" in result.stdout
-    assert "AFD execution: runner=FFN" in result.stdout
-
-
 def test_stream_output_records_attention_split_steps(monkeypatch):
     split_steps: list[float] = []
     process: Any = argparse.Namespace(
@@ -1814,6 +1787,10 @@ def test_v2_dbo_comparison_uses_controlled_commands(monkeypatch, scenario):
         assert (
             runner.build_env("0,1", args, role=role)["VLLM_USE_V2_MODEL_RUNNER"] == "1"
         )
+        worker = "AFDAttentionWorker" if role == "attention" else "AFDFFNWorker"
+        assert command[command.index("--worker-cls") + 1] == (
+            f"tests.e2e.mrv2_evidence.{worker}"
+        )
         assert command[command.index("--data-parallel-size") + 1] == "2"
         assert command[command.index("--tensor-parallel-size") + 1] == "1"
         assert command.count("--max-num-seqs") == 1
@@ -1886,7 +1863,7 @@ def test_mrv2_dbo_evidence_requires_live_matching_execution(graph):
     ffn_mode = "replay" if graph else "eager"
     attention = (
         f"AFD execution: runner=MRV2 phase=live mode={mode} stages=2 "
-        "tokens=[4, 4] real_tokens=[4, 2] transaction=10 count=2 consecutive=2"
+        "tokens=[4, 4] real_tokens=[4, 2] transaction=10 count=2"
     )
     ffn = (
         f"AFD execution: runner=FFN mode={ffn_mode} stages=2 "
@@ -1900,12 +1877,26 @@ def test_mrv2_dbo_evidence_requires_live_matching_execution(graph):
         )
         for rank in range(2)
     ]
+    events = [
+        (ts, role, line.replace("count=2", "count=1"))
+        for ts, role, line in events
+        if role == "attention"
+    ] + events
     runner.assert_mrv2_dbo_execution(events, 100.0, args)
-    for missing in range(len(events)):
-        with pytest.raises(RuntimeError, match="all expected ranks"):
-            runner.assert_mrv2_dbo_execution(
-                events[:missing] + events[missing + 1 :], 100.0, args
-            )
+    for missing_role in ("attention", "ffn"):
+        for missing_rank in range(2):
+            with pytest.raises(RuntimeError, match="all expected ranks"):
+                runner.assert_mrv2_dbo_execution(
+                    [
+                        (ts, role, line)
+                        for ts, role, line in events
+                        if not (
+                            role == missing_role and f"Worker_DP{missing_rank}_" in line
+                        )
+                    ],
+                    100.0,
+                    args,
+                )
     # Capture/profile, padding-only tails, unrelated FFN layouts and pre-eval
     # executions cannot substitute for completed live two-stage work.
     for invalid_attention in (
@@ -1917,7 +1908,14 @@ def test_mrv2_dbo_evidence_requires_live_matching_execution(graph):
         with pytest.raises(RuntimeError, match="lacks live two-stage"):
             runner.assert_mrv2_dbo_execution(
                 [
-                    (ts, role, line.replace(attention, invalid_attention))
+                    (
+                        ts,
+                        role,
+                        line.replace(
+                            attention.split(" transaction=")[0],
+                            invalid_attention.split(" transaction=")[0],
+                        ),
+                    )
                     for ts, role, line in events
                 ],
                 100.0,
@@ -1935,19 +1933,33 @@ def test_mrv2_dbo_evidence_requires_live_matching_execution(graph):
             args,
         )
     if graph:
-        for invalid_attention in (
-            attention.replace("mode=FULL", "mode=eager"),
-            attention.replace("consecutive=2", "consecutive=1"),
-        ):
+        for invalid_attention in (attention.replace("mode=FULL", "mode=eager"),):
             with pytest.raises(RuntimeError, match="lacks live two-stage"):
                 runner.assert_mrv2_dbo_execution(
                     [
-                        (ts, role, line.replace(attention, invalid_attention))
+                        (
+                            ts,
+                            role,
+                            line.replace(
+                                attention.split(" transaction=")[0],
+                                invalid_attention.split(" transaction=")[0],
+                            ),
+                        )
                         for ts, role, line in events
                     ],
                     100.0,
                     args,
                 )
+    if graph:
+        with pytest.raises(RuntimeError, match="consecutive replays"):
+            runner.assert_mrv2_dbo_execution(
+                [
+                    (ts, role, line.replace("count=2", "count=3"))
+                    for ts, role, line in events
+                ],
+                100.0,
+                args,
+            )
 
 
 def test_stream_output_records_sparse_execution_evidence(monkeypatch):
