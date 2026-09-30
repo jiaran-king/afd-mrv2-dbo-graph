@@ -1863,7 +1863,7 @@ def test_mrv2_dbo_evidence_requires_live_matching_execution(graph):
     ffn_mode = "replay" if graph else "eager"
     attention = (
         f"AFD execution: runner=MRV2 phase=live mode={mode} stages=2 "
-        "tokens=[4, 4] real_tokens=[4, 2] transaction=10 count=2"
+        "tokens=[4, 4] real_tokens=[4, 2] count=2"
     )
     ffn = (
         f"AFD execution: runner=FFN mode={ffn_mode} stages=2 "
@@ -1912,8 +1912,8 @@ def test_mrv2_dbo_evidence_requires_live_matching_execution(graph):
                         ts,
                         role,
                         line.replace(
-                            attention.split(" transaction=")[0],
-                            invalid_attention.split(" transaction=")[0],
+                            attention.split(" count=")[0],
+                            invalid_attention.split(" count=")[0],
                         ),
                     )
                     for ts, role, line in events
@@ -1941,8 +1941,8 @@ def test_mrv2_dbo_evidence_requires_live_matching_execution(graph):
                             ts,
                             role,
                             line.replace(
-                                attention.split(" transaction=")[0],
-                                invalid_attention.split(" transaction=")[0],
+                                attention.split(" count=")[0],
+                                invalid_attention.split(" count=")[0],
                             ),
                         )
                         for ts, role, line in events

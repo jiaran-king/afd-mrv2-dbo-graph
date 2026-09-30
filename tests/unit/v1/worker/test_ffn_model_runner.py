@@ -629,7 +629,6 @@ def test_ffn_runner_replays_cuda_graph_when_key_exists():
     assert runner.connector.ffn_outputs == []
 
 
-
 def test_ffn_runner_skips_replay_when_attention_is_eager():
     runner = _runner_with_connector_and_model(_FakeModel())
     runner.use_cuda_graph = True
