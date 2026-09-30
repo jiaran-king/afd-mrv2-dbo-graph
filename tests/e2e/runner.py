@@ -727,8 +727,7 @@ def build_vllm_command(
         json.dumps(afd_config, separators=(",", ":")),
     ]
     if args.scenario in V2_DBO_COMPARISON_SCENARIOS:
-        worker = "AFDAttentionWorker" if role == "attention" else "AFDFFNWorker"
-        cmd.extend(["--worker-cls", f"tests.e2e.mrv2_evidence.{worker}"])
+        cmd.extend(["--worker-extension-cls", "tests.e2e.mrv2_evidence.Worker"])
     if args.use_v2_model_runner:
         cmd.extend(
             [

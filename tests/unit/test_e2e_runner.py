@@ -1787,9 +1787,9 @@ def test_v2_dbo_comparison_uses_controlled_commands(monkeypatch, scenario):
         assert (
             runner.build_env("0,1", args, role=role)["VLLM_USE_V2_MODEL_RUNNER"] == "1"
         )
-        worker = "AFDAttentionWorker" if role == "attention" else "AFDFFNWorker"
-        assert command[command.index("--worker-cls") + 1] == (
-            f"tests.e2e.mrv2_evidence.{worker}"
+        assert "--worker-cls" not in command
+        assert command[command.index("--worker-extension-cls") + 1] == (
+            "tests.e2e.mrv2_evidence.Worker"
         )
         assert command[command.index("--data-parallel-size") + 1] == "2"
         assert command[command.index("--tensor-parallel-size") + 1] == "1"

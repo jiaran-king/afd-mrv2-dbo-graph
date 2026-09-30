@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the AFD plugin project
 """Test-only worker entry point for B/E/G execution evidence.
 
-Re-export the existing workers; no new worker or production instrumentation.
+Re-export their existing base as a no-op native worker extension. No new class
+or production instrumentation is needed; the worker hierarchy is unchanged.
 The probes live only in these explicitly selected E2E worker processes. They
 observe completed native calls, never synchronize devices or change execution.
 """
@@ -13,12 +14,11 @@ from functools import wraps
 
 from vllm.v1.worker.gpu.cudagraph_utils import ModelCudaGraphManager
 from vllm.v1.worker.gpu.model_runner import GPUModelRunner
+from vllm.v1.worker.gpu_worker import Worker
 
 from afd_plugin.v1.worker import ffn_model_runner
-from afd_plugin.v1.worker.attention_worker import AFDAttentionWorker
-from afd_plugin.v1.worker.ffn_worker import AFDFFNWorker
 
-__all__ = ["AFDAttentionWorker", "AFDFFNWorker"]
+__all__ = ["Worker"]
 
 EVIDENCE_INTERVAL = 128
 
