@@ -1892,8 +1892,20 @@ def test_mrv2_dbo_evidence_requires_live_matching_execution(graph):
         f"AFD execution: runner=FFN mode={ffn_mode} stages=2 "
         "layout=[[0,[4,4]],[1,[4,4]]] count=128"
     )
-    events = [(101.0, "attention", attention), (102.0, "ffn", ffn)]
+    events = [
+        (timestamp, role, f"(Worker_DP{rank}_EP{rank} pid={rank + 100}) {line}")
+        for timestamp, role, line in (
+            (101.0, "attention", attention),
+            (102.0, "ffn", ffn),
+        )
+        for rank in range(2)
+    ]
     runner.assert_mrv2_dbo_execution(events, 100.0, args)
+    for missing in range(len(events)):
+        with pytest.raises(RuntimeError, match="all expected ranks"):
+            runner.assert_mrv2_dbo_execution(
+                events[:missing] + events[missing + 1 :], 100.0, args
+            )
     # Capture/profile, padding-only tails, unrelated FFN layouts and pre-eval
     # executions cannot substitute for completed live two-stage work.
     for invalid_attention in (
@@ -1904,13 +1916,23 @@ def test_mrv2_dbo_evidence_requires_live_matching_execution(graph):
     ):
         with pytest.raises(RuntimeError, match="lacks live two-stage"):
             runner.assert_mrv2_dbo_execution(
-                [(101.0, "attention", invalid_attention), events[1]], 100.0, args
+                [
+                    (ts, role, line.replace(attention, invalid_attention))
+                    for ts, role, line in events
+                ],
+                100.0,
+                args,
             )
     with pytest.raises(RuntimeError, match="lacks live two-stage"):
         runner.assert_mrv2_dbo_execution(events, 103.0, args)
     with pytest.raises(RuntimeError, match="lacks live two-stage"):
         runner.assert_mrv2_dbo_execution(
-            [events[0], (102.0, "ffn", ffn.replace("[4,4]", "[3,3]"))], 100.0, args
+            [
+                (ts, role, line.replace("[4,4]", "[3,3]") if role == "ffn" else line)
+                for ts, role, line in events
+            ],
+            100.0,
+            args,
         )
     if graph:
         for invalid_attention in (
@@ -1919,7 +1941,12 @@ def test_mrv2_dbo_evidence_requires_live_matching_execution(graph):
         ):
             with pytest.raises(RuntimeError, match="lacks live two-stage"):
                 runner.assert_mrv2_dbo_execution(
-                    [(101.0, "attention", invalid_attention), events[1]], 100.0, args
+                    [
+                        (ts, role, line.replace(attention, invalid_attention))
+                        for ts, role, line in events
+                    ],
+                    100.0,
+                    args,
                 )
 
 

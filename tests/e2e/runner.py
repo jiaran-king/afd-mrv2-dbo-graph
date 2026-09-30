@@ -944,14 +944,19 @@ def assert_mrv2_dbo_execution(
     eval_started_at: float,
     args: argparse.Namespace,
 ) -> None:
-    """Require completed live MRV2 stages and their matching FFN execution."""
+    """Require all-rank layout coverage in the window, not exact step pairing."""
     attention_mode = "FULL" if args.cuda_graph_full_decode_only else "eager"
     ffn_mode = "replay" if args.cuda_graph_full_decode_only else "eager"
-    attention_layouts = []
-    ffn_layouts = []
+    attention_layouts = {}
+    ffn_layouts = {}
     for received_at, role, line in events:
         if received_at < eval_started_at:
             continue
+        worker = re.search(r"\(Worker_([^ ]+) pid=\d+\)", line)
+        if worker is None:
+            continue
+        ranks = dict(re.findall(r"(DP|TP)(\d+)", worker[1]))
+        rank = (int(ranks["DP"]), int(ranks.get("TP", "0")))
         if role == "attention" and (
             f"runner=MRV2 phase=live mode={attention_mode} stages=2 " in line
         ):
@@ -967,26 +972,42 @@ def assert_mrv2_dbo_execution(
             ):
                 continue
             tokens = json.loads(tokens_match[1])
-            attention_layouts.append(
-                [
-                    [stage, [count] * args.num_attention_ranks]
-                    for stage, count in enumerate(tokens)
-                ]
+            layout = tuple(
+                (stage, (count,) * args.num_attention_ranks)
+                for stage, count in enumerate(tokens)
             )
+            attention_layouts.setdefault(layout, set()).add(rank)
         if role == "ffn" and f"runner=FFN mode={ffn_mode} stages=2 " in line:
             layout_match = re.search(r"layout=(\[.*\]) count=", line)
             if layout_match is not None:
-                ffn_layouts.append(json.loads(layout_match[1]))
-    if any(layout in ffn_layouts for layout in attention_layouts):
+                layout = tuple(
+                    (stage, tuple(counts))
+                    for stage, counts in json.loads(layout_match[1])
+                )
+                ffn_layouts.setdefault(layout, set()).add(rank)
+    expected_attention = {
+        (dp, tp)
+        for dp in range(args.num_attention_ranks // args.attention_tp_size)
+        for tp in range(args.attention_tp_size)
+    }
+    expected_ffn = {
+        (dp, tp)
+        for dp in range(args.num_ffn_ranks // args.ffn_tp_size)
+        for tp in range(args.ffn_tp_size)
+    }
+    if any(
+        expected_attention <= ranks and expected_ffn <= ffn_layouts.get(layout, set())
+        for layout, ranks in attention_layouts.items()
+    ):
         print(
             f"[dbo-coverage] MRV2 live two-stage {attention_mode} and FFN "
-            f"{ffn_mode} confirmed with matching DP layouts"
+            f"{ffn_mode} confirmed on all expected ranks with matching DP layouts"
         )
         return
     raise RuntimeError(
         f"MRV2 DBO lacks live two-stage {attention_mode} and matching FFN "
         f"{ffn_mode} evidence in the evaluation window; FULL requires "
-        "consecutive replays and both microbatches must contain real tokens"
+        "all expected ranks, consecutive replays and two non-empty microbatches"
     )
 
 
